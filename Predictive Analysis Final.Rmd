@@ -1,0 +1,508 @@
+---
+title: "ALY 6080 EDA, Predictive Analysis & Dashboard"
+author: "Rishabh_Bansal"
+date: "2023-05-30"
+output: html_document
+---
+
+```{r, message=FALSE, warning=FALSE}
+library(readxl)
+library(knitr)
+library(kableExtra)
+library(gridExtra)
+library(tidyverse)
+library(dplyr)
+library(plyr)
+library(magrittr)
+library(plotrix)
+library(summarytools)
+library(reshape2)
+library(RColorBrewer)
+library(corrplot)
+library(ggbeeswarm)
+library(car)
+library(dendextend)
+library(cluster)
+library(caret)
+library(caTools)
+library(Metrics)
+library(randomForest)
+library(FNN)
+library(gbm)
+library(rpart)
+library(rpart.plot)
+library(xgboost)
+library(kknn)
+library(mice)
+library(corrplot)
+library(ggmap)
+library(leaflet)
+library(leaflet.extras)
+library(sf)
+library(hexbin)
+library(shiny)
+library(shinydashboard)
+library(dplyr)
+library(kableExtra)
+library(stringr)
+library(tm)
+library(gmodels)
+library(wordcloud)
+library(mlr)
+library(shiny)
+library(ggplot2)
+library(dplyr)
+library(DT)
+library(leaflet)
+library(shinythemes)
+```
+
+```{r}
+data <- read_csv("north_america.csv")
+```
+
+```{r}
+# Read data
+data <- read_csv("north_america.csv")
+dictionary <- read_excel("Corrected_names.xlsx")
+demo <- read_excel("demographics.xlsx")
+
+# Data manipulation
+data <- data %>%
+  select(brand_name, parent_company_name, year, submission_id, type_product, type_material, layer, city, 
+         province, country, type_of_audit, specifics_of_audit, longitude_most_specific, event_id,
+         latitude_most_specific)
+
+index <- match(tolower(data$city), tolower(dictionary$City))
+data$city <- dictionary$Corrected_Name[index]
+data$province <- dictionary$Province[index]
+data$country <- dictionary$Country[index]
+
+# Convert demo data to long format and convert Year column to numeric
+demo_long <- demo %>%
+  pivot_longer(
+    cols = starts_with(c("Population", "Province_GDP", "Percent_of_Population", "Percent_of_GDP")),
+    names_to = c(".value", "year"),
+    names_pattern = "(.+)_([0-9]{4})"
+  ) %>%
+  mutate(year = as.numeric(year))
+
+# Add new columns to data based on matched province and year
+matching_indices <- match(paste(data$province, data$year), paste(demo_long$Province, demo_long$year))
+data$population <- demo_long$Population[matching_indices]
+data$province_gdp <- demo_long$Province_GDP[matching_indices]
+data$percent_of_population <- demo_long$Percent_of_Population[matching_indices]
+data$percent_of_gdp <- demo_long$Percent_of_GDP[matching_indices]
+
+# Cleaning up the city, province, and country column
+data$city <- str_replace_all(data$city, " ", "_")
+data$province <- str_replace_all(data$province, " ", "_")
+data$country <- str_replace_all(data$country, " ", "_")
+data$city <- str_replace_all(data$city, "[, ]", "_")
+data$province <- str_replace_all(data$province, "[, ]", "_")
+data$country <- str_replace_all(data$country, "[, ]", "_")
+
+```
+
+```{r}
+# Ensure province and year are factors
+data$province <- as.factor(data$province)
+data$year <- as.factor(data$year)
+
+# Calculate count of each province for each year
+province_year_counts <- data %>%
+  dplyr::group_by(province, year) %>%
+  dplyr::summarise(count = dplyr::n(), .groups = "drop") 
+
+# Filter provinces with count over 300
+filtered_province_year_counts <- province_year_counts %>%
+  dplyr::group_by(province) %>%
+  dplyr::summarise(total_count = sum(count), .groups = "drop") %>%
+  dplyr::filter(total_count > 300)
+
+# Merge with the original dataset to keep only the data of provinces with over 300 counts
+province_year_counts <- province_year_counts %>%
+  dplyr::semi_join(filtered_province_year_counts, by = "province")
+
+# Create stacked bar plot
+ggplot(province_year_counts, aes(x = province, y = count, fill = year)) +
+  geom_bar(stat = "identity", position = "stack") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  labs(x = "Province", y = "Count", fill = "Year")
+```
+
+```{r}
+# Ensure province and type_material are factors
+data$province <- as.factor(data$province)
+data$type_material <- as.factor(data$type_material)
+
+# Exclude "o" and "NA" entries in type_material
+data2 <- data %>%
+  dplyr::filter(type_material != "o", !is.na(type_material))
+
+# Calculate count of each province for each type of material
+province_material_counts <- data2 %>%
+  dplyr::group_by(province, type_material) %>%
+  dplyr::summarise(count = dplyr::n(), .groups = "drop") 
+
+# Filter provinces with count over 300
+filtered_province_material_counts <- province_material_counts %>%
+  dplyr::group_by(province) %>%
+  dplyr::summarise(total_count = sum(count), .groups = "drop") %>%
+  dplyr::filter(total_count > 300)
+
+# Merge with the original dataset to keep only the data of provinces with over 300 counts
+province_material_counts <- province_material_counts %>%
+  dplyr::semi_join(filtered_province_material_counts, by = "province")
+
+# Create stacked bar plot
+ggplot(province_material_counts, aes(x = province, y = count, fill = type_material)) +
+  geom_bar(stat = "identity", position = "stack") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  labs(x = "Province", y = "Count", fill = "Type of Material")
+
+```
+
+```{r}
+# Ensure type_product and type_material are factors
+data$type_product <- as.factor(data$type_product)
+data$type_material <- as.factor(data$type_material)
+
+# Calculate count of each type of product for each type of material
+product_material_counts <- data %>%
+  dplyr::group_by(type_product, type_material) %>%
+  dplyr::summarise(count = dplyr::n(), .groups = "drop") 
+
+# Create stacked bar plot
+ggplot(product_material_counts, aes(x = type_product, y = count, fill = type_material)) +
+  geom_bar(stat = "identity", position = "stack") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  labs(x = "Type of Product", y = "Count", fill = "Type of Material")
+
+```
+
+```{r}
+# Filter the data for the countries of interest
+filtered_data <- data %>% 
+  dplyr::filter(country %in% c("USA", "Mexico", "Canada"))
+
+# Ensure type_product and type_material are factors
+filtered_data$type_product <- as.factor(filtered_data$type_product)
+filtered_data$type_material <- as.factor(filtered_data$type_material)
+
+# Calculate count of each type of product for each type of material, for each country
+product_material_country_counts <- filtered_data %>%
+  dplyr::group_by(country, type_product, type_material) %>%
+  dplyr::summarise(count = dplyr::n(), .groups = "drop")
+
+# Create stacked bar plot
+ggplot(product_material_country_counts, aes(x = type_product, y = count, fill = type_material)) +
+  geom_bar(stat = "identity", position = "stack") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  labs(x = "Type of Product", y = "Count", fill = "Type of Material") +
+  facet_wrap(~ country)
+
+```
+
+```{r}
+# Ensure year and country are factors
+data$year <- as.factor(data$year)
+data$country <- as.factor(data$country)
+
+# Calculate count of each country for each year
+country_year_counts <- data %>%
+  dplyr::group_by(country, year) %>%
+  dplyr::summarise(count = dplyr::n(), .groups = "drop") 
+
+# Create stacked bar plot
+ggplot(country_year_counts, aes(x = country, y = count, fill = year)) +
+  geom_bar(stat = "identity", position = "stack") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  labs(x = "Country", y = "Count", fill = "Year")
+```
+
+```{r}
+# Create a text corpus
+corpus <- Corpus(VectorSource(data$country))
+
+# Clean the text data
+clean_corpus <- tm_map(corpus, content_transformer(tolower))
+clean_corpus <- tm_map(clean_corpus, removePunctuation)
+clean_corpus <- tm_map(clean_corpus, removeNumbers)
+clean_corpus <- tm_map(clean_corpus, removeWords, stopwords("english"))
+
+# Create a term document matrix
+tdm <- TermDocumentMatrix(clean_corpus)
+m <- as.matrix(tdm)
+v <- sort(rowSums(m),decreasing=TRUE)
+
+# Create a data frame with words and their frequencies
+data_freq <- data.frame(word = names(v),freq=v)
+
+# Plot word cloud
+wordcloud(words = data_freq$word, freq = data_freq$freq, min.freq = 1,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+```
+
+```{r}
+# Create a text corpus
+corpus <- Corpus(VectorSource(data$type_material))
+
+# Clean the text data
+clean_corpus <- tm_map(corpus, content_transformer(tolower))
+clean_corpus <- tm_map(clean_corpus, removePunctuation)
+clean_corpus <- tm_map(clean_corpus, removeNumbers)
+clean_corpus <- tm_map(clean_corpus, removeWords, stopwords("english"))
+
+# Create a term document matrix
+tdm <- TermDocumentMatrix(clean_corpus)
+m <- as.matrix(tdm)
+v <- sort(rowSums(m),decreasing=TRUE)
+
+# Create a data frame with words and their frequencies
+data_freq <- data.frame(word = names(v),freq=v)
+
+# Plot word cloud
+wordcloud(words = data_freq$word, freq = data_freq$freq, min.freq = 1,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+```
+
+```{r}
+data$type_product[is.na(data$type_product)] <- "undef"
+
+type_product_counts <- data.frame(table(data$type_product))
+
+colnames(type_product_counts) <- c("type_product", "count")
+
+ggplot(type_product_counts, aes(x="", y=count, fill=type_product)) +
+  geom_bar(width = 1, stat = "identity") +
+  coord_polar("y", start=0) + 
+  theme_void() + 
+  theme(legend.position="right") +
+  labs(fill="Product Type")
+
+```
+
+```{r}
+# Load required packages
+library(leaflet)
+library(leaflet.extras)
+
+# Remove rows with NA longitude or latitude
+data <- na.omit(data)
+
+# Check if there is data in your dataframe
+if(nrow(data) > 0) {
+
+  # Check if longitude and latitude are in correct range
+  if(all(data$longitude_most_specific >= -180, 
+         data$longitude_most_specific <= 180,
+         data$latitude_most_specific >= -90, 
+         data$latitude_most_specific <= 90)) {
+
+    # Create a leaflet map
+    m <- leaflet(data) %>%
+         addTiles() %>%  # Add default OpenStreetMap map tiles
+         addHeatmap(lng = ~longitude_most_specific, 
+                    lat = ~latitude_most_specific, 
+                    radius = 10,
+                    blur = 15,
+                    max = 0.3,
+                    gradient = c('0' = 'green', '0.5' = 'yellow', '1' = 'red'))
+
+    # Print the map
+    m
+  } else {
+    print("Longitude and/or latitude are out of range.")
+  }
+} else {
+  print("No data in the dataframe.")
+}
+```
+
+```{r}
+# Load the necessary library
+library(randomForest)
+
+# Removing rows with NA values
+data <- na.omit(data)
+
+# Convert 'type_material' and 'type_product' to factors
+data$type_material <- as.factor(data$type_material)
+data$type_product <- as.factor(data$type_product)
+
+# Create a model for 'type_material'
+set.seed(123) # Setting seed to reproduce results of random sampling
+indices <- sample(1:nrow(data), nrow(data)*0.7)
+
+train_data <- data[indices,]
+test_data <- data[-indices,]
+
+rf_model_material <- randomForest(type_material ~ province_gdp + population + percent_of_gdp + percent_of_population,
+                                  data=train_data,
+                                  importance=TRUE)
+
+# Print model summary
+print(rf_model_material)
+
+# Predict 'type_material' for the test data
+test_data$pred_material <- predict(rf_model_material, newdata=test_data)
+
+# Calculate accuracy of the model
+accuracy <- sum(test_data$type_material == test_data$pred_material) / nrow(test_data)
+print(paste("Accuracy: ", round(accuracy*100, 2), "%", sep=""))
+
+```
+
+```{r}
+# Load the necessary library
+library(e1071)
+
+# Create a model for 'type_material'
+svm_model_material <- svm(type_material ~ province_gdp + population + percent_of_gdp + percent_of_population,
+                          data=train_data)
+
+# Print model summary
+print(svm_model_material)
+
+# Predict 'type_material' for the test data
+test_data$pred_material <- predict(svm_model_material, newdata=test_data)
+
+# Calculate accuracy of the model
+accuracy <- sum(test_data$type_material == test_data$pred_material) / nrow(test_data)
+print(paste("Accuracy: ", round(accuracy*100, 2), "%", sep=""))
+
+```
+
+```{r}
+# Normalize the features
+normalize <- function(x) {
+    return ((x - min(x)) / (max(x) - min(x)))
+}
+
+data$province_gdp <- normalize(data$province_gdp)
+data$population <- normalize(data$population)
+data$percent_of_gdp <- normalize(data$percent_of_gdp)
+data$percent_of_population <- normalize(data$percent_of_population)
+
+# Train/Test split
+train_data <- data[indices,]
+test_data <- data[-indices,]
+
+# Create a model for 'type_material'
+# Tuning the cost parameter
+svm_model_material <- svm(type_material ~ province_gdp + population + percent_of_gdp + percent_of_population,
+                          data=train_data, 
+                          cost=10)  # Change the cost
+
+# Print model summary
+print(svm_model_material)
+
+# Predict 'type_material' for the test data
+test_data$pred_material <- predict(svm_model_material, newdata=test_data)
+
+# Calculate accuracy of the model
+accuracy <- sum(test_data$type_material == test_data$pred_material) / nrow(test_data)
+print(paste("Accuracy: ", round(accuracy*100, 2), "%", sep=""))
+
+```
+
+```{r}
+# Load necessary library
+library(gbm)
+
+# Create a model for 'type_material'
+gbm_model_material <- gbm(type_material ~ province_gdp + population + percent_of_gdp + percent_of_population,
+                          data = train_data,
+                          distribution = "multinomial",
+                          n.trees = 500,    # Number of trees to build
+                          interaction.depth = 4,  # Depth of variable interactions
+                          shrinkage = 0.01,  # Learning rate
+                          cv.folds = 5)   # Perform 5-fold cross validation
+
+# Summary of the model
+summary(gbm_model_material)
+
+# Predict 'type_material' for the test data
+test_data$pred_material <- predict.gbm(gbm_model_material, 
+                                       newdata = test_data, 
+                                       n.trees = gbm_model_material$n.trees,
+                                       type = "response")
+
+# Get the class with the highest probability
+test_data$pred_material <- colnames(test_data$pred_material)[apply(test_data$pred_material, 1, which.max)]
+
+# Calculate accuracy of the model
+accuracy <- sum(test_data$type_material == test_data$pred_material) / nrow(test_data)
+print(paste("Accuracy: ", round(accuracy*100, 2), "%", sep=""))
+```
+
+
+```{r}
+# Install required packages
+if(!require(caret)) install.packages("caret")
+library(caret)
+
+if(!require(gbm)) install.packages("gbm")
+library(gbm)
+
+# Define the control function
+control <- caret::trainControl(method = "cv", number = 5)
+
+# Define the tune grid
+gbmGrid <- expand.grid(
+  interaction.depth = c(1, 3, 5), # Depth of variable interactions
+  n.trees = seq(from = 100, to = 1000, by = 200),  # Number of trees
+  shrinkage = c(0.01, 0.1), # Learning rate
+  n.minobsinnode = 10
+)
+
+train_data$population <- as.numeric(train_data$population)
+train_data$province_gdp <- as.numeric(train_data$province_gdp)
+train_data$percent_of_gdp <- as.numeric(train_data$percent_of_gdp)
+train_data$percent_of_population <- as.numeric(train_data$percent_of_population)
+
+gbm_model <- caret::train(
+  type_material ~ province_gdp + population + percent_of_gdp + percent_of_population,
+  data = train_data,
+  method = "gbm",
+  trControl = control,
+  tuneGrid = gbmGrid,
+  verbose = FALSE
+)
+
+print(gbm_model$bestTune)
+
+```
+
+```{r warning=FALSE, message=FALSE}
+final_model <- gbm(
+  type_material ~ province_gdp + population + percent_of_gdp + percent_of_population,
+  data = train_data,
+  distribution = "multinomial",
+  n.trees = 900,
+  interaction.depth = 5,
+  shrinkage = 0.1,
+  n.minobsinnode = 10,
+  verbose = FALSE
+)
+
+predictions <- predict.gbm(
+  object = final_model,
+  newdata = test_data[, c("province_gdp", "population", "percent_of_gdp", "percent_of_population")],
+  n.trees = 900,
+  type = "response"
+)
+
+predicted_classes <- apply(predictions, 1, which.max)
+predicted_classes <- colnames(predictions)[predicted_classes]
+
+actual_classes <- as.character(test_data$type_material)
+
+accuracy <- sum(predicted_classes == actual_classes) / length(actual_classes)
+
+print(accuracy)
+
+```

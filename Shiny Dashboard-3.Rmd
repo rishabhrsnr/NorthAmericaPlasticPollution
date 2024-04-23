@@ -1,0 +1,325 @@
+---
+title: "Shiny Dashboard"
+author: "Rishabh Bansal"
+date: "2023-05-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(shiny)
+library(ggplot2)
+library(dplyr)
+library(DT)
+library(leaflet)
+library(shinythemes)
+
+# Read data
+data <- read_csv("north_america.csv")
+dictionary <- read_excel("Corrected_names.xlsx")
+demo <- read_excel("demographics.xlsx")
+
+# Data manipulation
+data <- data %>%
+  select(brand_name, parent_company_name, year, submission_id, type_product, type_material, layer, city, 
+         province, country, type_of_audit, specifics_of_audit, longitude_most_specific, event_id,
+         latitude_most_specific)
+
+index <- match(tolower(data$city), tolower(dictionary$City))
+data$city <- dictionary$Corrected_Name[index]
+data$province <- dictionary$Province[index]
+data$country <- dictionary$Country[index]
+
+matching_indices <- match(data$province, demo$Province)
+data$Population_2022 <- demo$Population_2022[matching_indices]
+data$Province_GDP_2022 <- demo$Province_GDP_2022[matching_indices]
+data$Population_2021 <- demo$Population_2021[matching_indices]
+data$Province_GDP_2021 <- demo$Province_GDP_2021[matching_indices]
+data$Population_2020 <- demo$Population_2020[matching_indices]
+data$Province_GDP_2020 <- demo$Province_GDP_2020[matching_indices]
+data$Population_2019 <- demo$Population_2019[matching_indices]
+data$Province_GDP_2019 <- demo$Province_GDP_2019[matching_indices]
+data$Country_Population <- demo$Country_Population[matching_indices]
+data$Country_GDP <- demo$Country_GDP[matching_indices]
+data$Percent_of_Population_2022 <- demo$Percent_of_Population_2022[matching_indices]
+data$Percent_of_Population_2021 <- demo$Percent_of_Population_2021[matching_indices]
+data$Percent_of_Population_2020 <- demo$Percent_of_Population_2020[matching_indices]
+data$Percent_of_Population_2019 <- demo$Percent_of_Population_2019[matching_indices]
+data$Percent_of_GDP_2022 <- demo$Percent_of_GDP_2022[matching_indices]
+data$Percent_of_GDP_2021 <- demo$Percent_of_GDP_2021[matching_indices]
+data$Percent_of_GDP_2020 <- demo$Percent_of_GDP_2020[matching_indices]
+data$Percent_of_GDP_2019 <- demo$Percent_of_GDP_2019[matching_indices]
+
+matching_indices <- match(data$country, demo$Country)
+data$Country_GDP_2022 <- demo$Country_GDP[matching_indices]
+
+data$city <- str_replace_all(data$city, " ", "_")
+data$province <- str_replace_all(data$province, " ", "_")
+data$country <- str_replace_all(data$country, " ", "_")
+data$city <- str_replace_all(data$city, "[, ]", "_")
+data$province <- str_replace_all(data$province, "[, ]", "_")
+data$country <- str_replace_all(data$country, "[, ]", "_")
+
+# Define UI
+ui <- fluidPage(
+  theme = shinythemes::shinytheme("cerulean"),  # Theme for the entire dashboard
+  
+  navbarPage(
+    title = "Dashboard",
+    tabPanel(
+      "Time Trends",
+      theme = shinythemes::shinytheme("flatly"),  # Theme for this tab
+      
+      fluidRow(
+        column(
+          width = 6,
+          plotOutput("province_year_plot")
+        ),
+        column(
+          width = 6,
+          plotOutput("country_year_plot")
+        )
+      )
+    ),
+    
+    tabPanel(
+      "Province and Material",
+      theme = shinythemes::shinytheme("journal"),  # Theme for this tab
+      
+      fluidRow(
+        column(
+          width = 6,
+          plotOutput("province_material_plot")
+        ),
+        column(
+          width = 6,
+          plotOutput("product_material_country_plot")
+        )
+      )
+    ),
+    
+    tabPanel(
+      "Product and Material",
+      theme = shinythemes::shinytheme("sandstone"),  # Theme for this tab
+      
+      fluidRow(
+        column(
+          width = 12,
+          plotOutput("product_material_plot")
+        )
+      )
+    ),
+    
+    tabPanel(
+      "Data Exploration",
+      theme = shinythemes::shinytheme("cosmo"),  # Theme for this tab
+      
+      fluidRow(
+        column(
+          width = 3,
+          selectInput("country_select", "Select Country:", choices = c("All", unique(data$country))),
+          selectInput("province_select", "Select Province:", choices = c("All", unique(data$province))),
+          selectInput("city_select", "Select City:", choices = c("All", unique(data$city))),
+          selectInput("columns_select", "Select Columns:", choices = colnames(data), multiple = TRUE)
+        ),
+        column(
+          width = 9,
+          DT::dataTableOutput("data_table")
+        )
+      )
+    ),
+    
+    tabPanel(
+      "Geographic Heatmap",
+      theme = shinythemes::shinytheme("yeti"),  # Theme for this tab
+      
+      fluidRow(
+        column(
+          width = 3,
+          selectInput("country_filter", "Filter by Country:", choices = c("All", unique(data$country))),
+          selectInput("province_filter", "Filter by Province:", choices = c("All", unique(data$province))),
+          selectInput("year_filter", "Filter by Year:", choices = c("All", unique(data$year)))
+        ),
+        column(
+          width = 9,
+          leafletOutput("heatmap", height = "400px")
+        )
+      )
+    )
+  )
+)
+
+# Define server
+server <- function(input, output) {
+  output$province_year_plot <- renderPlot({
+    req(data)
+    
+    province_year_counts <- data %>%
+      dplyr::group_by(province, year) %>%
+      dplyr::summarise(count = n(), .groups = "drop")
+    
+    filtered_province_year_counts <- province_year_counts %>%
+      dplyr::group_by(province) %>%
+      dplyr::summarise(total_count = sum(count), .groups = "drop") %>%
+      dplyr::filter(total_count > 300)
+    
+    province_year_counts <- province_year_counts %>%
+      dplyr::semi_join(filtered_province_year_counts, by = "province")
+    
+    ggplot(province_year_counts, aes(x = province, y = count, fill = year)) +
+      geom_bar(stat = "identity", position = "stack") +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+      labs(x = NULL, y = "Count", fill = NULL) +
+      ggtitle("Province level distribution of product item counts by year")
+  })
+
+  output$country_year_plot <- renderPlot({
+    req(data)
+    
+    country_year_counts <- data %>%
+      dplyr::group_by(country, year) %>%
+      dplyr::summarise(count = n(), .groups = "drop")
+    
+    ggplot(country_year_counts, aes(x = country, y = count, fill = year)) +
+      geom_bar(stat = "identity", position = "stack") +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+      labs(x = NULL, y = "Count", fill = NULL) +
+      ggtitle("Country level distribution of product item counts by year")
+  })
+
+  output$province_material_plot <- renderPlot({
+    req(data)
+    
+    data_filtered <- data %>%
+      dplyr::filter(type_material != "o", !is.na(type_material))
+    
+    province_material_counts <- data_filtered %>%
+      dplyr::group_by(province, type_material) %>%
+      dplyr::summarise(count = n(), .groups = "drop") 
+    
+    filtered_province_material_counts <- province_material_counts %>%
+      dplyr::group_by(province) %>%
+      dplyr::summarise(total_count = sum(count), .groups = "drop") %>%
+      dplyr::filter(total_count > 300)
+    
+    province_material_counts <- province_material_counts %>%
+      dplyr::semi_join(filtered_province_material_counts, by = "province")
+    
+    ggplot(province_material_counts, aes(x = province, y = count, fill = type_material)) +
+      geom_bar(stat = "identity", position = "stack") +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+      labs(x = "Province", y = "Count", fill = "Type of Material") +
+      ggtitle("Province level distribution of product item counts by plastic material types")
+  })
+
+  output$product_material_country_plot <- renderPlot({
+    req(data)
+    
+    filtered_data <- data %>%
+      dplyr::filter(country %in% c("USA", "Mexico", "Canada"))
+    
+    product_material_country_counts <- filtered_data %>%
+      dplyr::group_by(country, type_product, type_material) %>%
+      dplyr::summarise(count = n(), .groups = "drop")
+    
+    ggplot(product_material_country_counts, aes(x = type_product, y = count, fill = type_material)) +
+      geom_bar(stat = "identity", position = "stack") +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+      labs(x = "Type of Product", y = "Count", fill = "Type of Material") +
+      facet_wrap(~ country) +
+      ggtitle("Product item counts by plastic material types in USA, Mexico, and Canada")
+  })
+  
+  output$data_table <- DT::renderDataTable({
+    req(data)
+    
+    filtered_data <- data
+    
+    if (input$country_select != "All") {
+      filtered_data <- filtered_data %>%
+        dplyr::filter(country == input$country_select)
+    }
+    
+    if (input$province_select != "All") {
+      filtered_data <- filtered_data %>%
+        dplyr::filter(province == input$province_select)
+    }
+    
+    if (input$city_select != "All") {
+      filtered_data <- filtered_data %>%
+        dplyr::filter(city == input$city_select)
+    }
+    
+    # Get the selected columns
+    selected_columns <- input$columns_select
+    
+    # Check if any columns are selected
+    if (length(selected_columns) > 0) {
+      # Subset the data based on selected columns
+      filtered_data <- filtered_data %>%
+        dplyr::select(all_of(selected_columns))
+    }
+    
+    datatable(
+      filtered_data,
+      options = list(
+        dom = 'Bfrtip',
+        buttons = list(
+          'colvis',
+          'excel',
+          'csv'
+        )
+      )
+    )
+  })
+  
+  output$heatmap <- renderLeaflet({
+    req(data)
+    
+    # Apply filters
+    filtered_data <- data
+    
+    if (input$country_filter != "All") {
+      filtered_data <- filtered_data %>%
+        dplyr::filter(country == input$country_filter)
+    }
+    
+    if (input$province_filter != "All") {
+      filtered_data <- filtered_data %>%
+        dplyr::filter(province == input$province_filter)
+    }
+    
+    if (input$year_filter != "All") {
+      filtered_data <- filtered_data %>%
+        dplyr::filter(year == input$year_filter)
+    }
+    
+    filtered_data <- filtered_data[complete.cases(filtered_data$longitude_most_specific, filtered_data$latitude_most_specific), ]
+    
+    location_counts <- filtered_data %>%
+      dplyr::group_by(longitude_most_specific, latitude_most_specific) %>%
+      dplyr::summarise(count = n_distinct(event_id), .groups = "drop")
+    
+    if (nrow(location_counts) > 0) {
+      leaflet() %>%
+        addTiles() %>%
+        addHeatmap(
+          data = location_counts,
+          lng = ~longitude_most_specific,
+          lat = ~latitude_most_specific,
+          intensity = ~count,
+          blur = 20,
+          max = 100
+        )
+    } else {
+      # Handle case where there are no valid locations
+      leaflet() %>%
+        addTiles() %>%
+        addMarkers(lng = 0, lat = 0, popup = "No valid locations")
+    }
+  })
+}
+
+# Run the Shiny app
+shinyApp(ui = ui, server = server)
+
+```
