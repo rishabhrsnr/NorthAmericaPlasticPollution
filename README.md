@@ -19,13 +19,6 @@ This project was undertaken as part of my coursework for ALY6080: Integrated Exp
 - `Scripts/`: R scripts for performing the exploratory data analysis and predictive modeling.
 - `Dashboard/`: Files and resources used to build the interactive dashboard for visualizing the study results.
 
-## Running the Scripts
-- Make sure R is installed along with the necessary packages (`randomForest`, `e1071`, `gbm`).
-- Execute the scripts in the `Scripts/` directory to reproduce the analysis and model predictions.
-
-## Dependencies
-- R and the following R packages: `dplyr`, `ggplot2`, `shiny`, `randomForest`, `e1071`, `gbm`
-
 ## Author
 - Rishabh Bansal
 
